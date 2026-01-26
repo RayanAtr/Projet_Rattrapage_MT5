@@ -1,0 +1,148 @@
+/* Admin page styles */
+.admin-page {
+  padding: 8px 0
+}
+
+.admin-grid {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start
+}
+
+.admin-form {
+  background: #fff;
+  padding: 14px;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.04)
+}
+
+.admin-form label {
+  display: block;
+  margin-bottom: 8px
+}
+
+.admin-form input,
+.admin-form textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #e6e6e6;
+  border-radius: 6px
+}
+
+.admin-list {
+  width: 420px
+}
+
+.admin-room {
+  background: #fff;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center
+}
+
+.admin-room .meta {
+  font-size: 13px;
+  color: #666
+}
+
+.admin-actions {
+  display: flex;
+  gap: 8px
+}
+
+@media (max-width: 900px) {
+  .admin-grid {
+    flex-direction: column
+  }
+
+  .admin-list {
+    width: 100%
+  }
+}
+
+/* TITRES */
+
+h2 {
+  font-size: 22px;
+  margin-bottom: 16px;
+}
+
+h3 {
+  font-size: 18px;
+  margin-bottom: 12px;
+}
+
+/*FORMULAIRE */
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #444;
+}
+
+label input,
+label textarea {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+
+label input::placeholder,
+label textarea::placeholder {
+  color: #999;
+}
+
+
+label input:focus,
+label textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+
+label textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* BOUTONS */
+
+.btn {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.btn.primary {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #ffffff;
+}
+
+.btn.primary:hover {
+  background: #4f46e5;
+}
+
+.btn:hover {
+  background: #f3f4f6;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
