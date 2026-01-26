@@ -1,145 +1,234 @@
 import React, { useState, useEffect } from 'react'
 import Booking from './pages/Booking'
+import Rooms from './pages/Rooms'
+import Login from './pages/Login'
+import MyBookings from './pages/MyBookings'
+import Admin from './pages/Admin'
 import { supabase } from './lib/supabase'
+// App principal
+// - charge les espaces depuis Supabase
+// - gère l'état d'authentification
+// - affiche la navbar et les pages (rooms / booking / login)
 
-type Route = 'rooms' | 'booking' | 'mybookings'
+type Route = 'rooms' | 'booking' | 'login' | 'mybookings' | 'admin'
 type Room = { id: string | number; name?: string }
-
-function daysInMonth(year: number, month: number) {
-  return new Date(year, month + 1, 0).getDate()
-}
-
-function firstDayOfMonth(year: number, month: number) {
-  return new Date(year, month, 1).getDay()
-}
-
-const COLORS = [
-  '#1f77b4',
-  '#ff7f0e',
-  '#2ca02c',
-  '#d62728',
-  '#9467bd',
-  '#8c564b',
-  '#e377c2'
-]
 
 export default function App() {
   const [route, setRoute] = useState<Route>('rooms')
   const [rooms, setRooms] = useState<Room[]>([])
   const [loadingRooms, setLoadingRooms] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  // calendar state
-  const today = new Date()
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth())
+  const [user, setUser] = useState<any | null>(null)
+  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
+  const [selectedBooking, setSelectedBooking] = useState<any | null>(null)
+  const showAdminLink = (isAdmin(user) || (import.meta as any).env && (import.meta as any).env.DEV)
 
   useEffect(() => {
     let mounted = true
-    ;(async () => {
+
+    const refreshRoomsAndBookings = async () => {
       try {
-        const { data, error } = await supabase.from('rooms').select('id,name')
+        setLoadingRooms(true)
+        const nowISO = new Date().toISOString()
+
+        // Marquer comme expirées les réservations dont la fin est passée
+        try {
+          const { error: updErr } = await supabase
+            .from('bookings')
+            .update({ status: 'expired' })
+            .lt('end_at', nowISO)
+            .eq('status', 'confirmed')
+          if (updErr) console.error('Erreur mise à jour réservations expirées', updErr)
+        } catch (e) {
+          console.error('Erreur lors du nettoyage des réservations', e)
+        }
+
+        const roomsRes = await supabase.from('rooms').select('*')
+        const bookingsRes = await supabase.from('bookings').select('*')
+
         if (!mounted) return
-        if (error) {
-          setError(error.message)
+
+        if (roomsRes.error) {
+          setError(roomsRes.error.message)
           setRooms([])
         } else {
-          setRooms((data as Room[]) || [])
+          const roomsData = (roomsRes.data as Room[]) || []
+          const bookingsData = (bookingsRes.data as any[]) || []
+          const now = new Date().toISOString()
+
+          const roomsAug = roomsData.map((room) => {
+            const roomBookings = bookingsData.filter(b => String(b.room_id) === String(room.id) && b.status === 'confirmed')
+            const current = roomBookings.find(b => b.start_at <= now && b.end_at > now) || null
+            const upcoming = roomBookings
+              .filter(b => b.start_at > now)
+              .sort((a,b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime())[0] || null
+            return { ...room, current_booking: current, next_booking: upcoming }
+          })
+
+          setRooms(roomsAug)
         }
       } catch (err: any) {
         setError(err?.message ?? String(err))
       } finally {
         if (mounted) setLoadingRooms(false)
       }
+    }
+
+    ;(async () => {
+      // Chargement initial des rooms + bookings
+      await refreshRoomsAndBookings()
+
+      // auth user
+      const { data } = await supabase.auth.getUser()
+      const currentUser = data?.user ?? null
+      setUser(currentUser)
+      if (currentUser) {
+        scheduleRemindersForUser(currentUser)
+      }
     })()
+
+    // Recharger quand les bookings changent
+    const channel = supabase.channel('public:bookings')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+        refreshRoomsAndBookings()
+        // reprogrammer les reminders
+        try { scheduleRemindersForUser(user) } catch (e) { /* ignore */ }
+      })
+      .subscribe()
+
+    // rappele les reminders pour les réservations à venir
+    const reminderTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+
+    async function scheduleRemindersForUser(userObj: any | null) {
+      // Supprimer les anciens timers
+      reminderTimeouts.forEach(t => clearTimeout(t))
+      reminderTimeouts.clear()
+      if (!userObj) return
+
+      // Demander la permission de notification si nécessaire
+      if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+        try { await Notification.requestPermission() } catch (e) { /* ignore */ }
+      }
+
+      const { data: bookings } = await supabase
+        .from('bookings')
+        .select('id,room_id,start_at,end_at,status')
+        .eq('user_id', userObj.id)
+        .eq('status', 'confirmed')
+
+      const now = Date.now()
+      const reminderBefore: number = 15 * 60 * 1000; // 15 minutes
+
+      (bookings || []).forEach((b: any) => {
+        const start = new Date(b.start_at).getTime()
+        const when = start - reminderBefore
+        const delay = when - now
+        if (delay > 0 && delay < 2147483647) {
+          const t = setTimeout(() => {
+            try {
+              if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                new Notification('Rappel de réservation', { body: `Votre réservation pour la salle ${b.room_id} commence à ${new Date(b.start_at).toLocaleString()}` })
+              } else {
+                // fallback in-page alert
+                alert(`Rappel: réservation pour la salle ${b.room_id} commence à ${new Date(b.start_at).toLocaleString()}`)
+              }
+            } catch (e) { console.error('Erreur notification', e) }
+          }, delay)
+          reminderTimeouts.set(String(b.id), t)
+        }
+      })
+    }
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => { // Écouter les changements d'auth
+      setUser(session?.user ?? null)
+    })
+    const subscription = data?.subscription
+
     return () => {
       mounted = false
+      // désabonner les changements d'auth
+      subscription?.unsubscribe()
+      try { channel.unsubscribe() } catch (e) { /* ignore */ }
     }
   }, [])
 
-  const prevMonth = () => {
-    if (month === 0) {
-      setMonth(11)
-      setYear((y) => y - 1)
-    } else setMonth((m) => m - 1)
-  }
-  const nextMonth = () => {
-    if (month === 11) {
-      setMonth(0)
-      setYear((y) => y + 1)
-    } else setMonth((m) => m + 1)
-  }
-
-  const numDays = daysInMonth(year, month)
-  const startIndex = firstDayOfMonth(year, month) // 0=Sun
-
-  const monthName = new Date(year, month).toLocaleString(undefined, { month: 'long' })
-
   return (
-    <div style={{ fontFamily: 'Arial, sans-serif', padding: 12 }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Flex Calendar</h1>
-        <nav>
-          <button onClick={() => setRoute('rooms')}>Rooms</button>
-          <button onClick={() => setRoute('booking')}>Booking</button>
-          <button onClick={() => setRoute('mybookings')}>My Bookings</button>
+    <div style={{ fontFamily: 'Arial, sans-serif', padding: 0 }}>
+      <header className="topbar">
+        <div className="logo" onClick={() => setRoute('rooms')}>Flex<span className="logo-accent">Book</span></div>
+        <nav className="topnav">
+          <button className="nav-item" onClick={() => setRoute('rooms')}>Espaces</button>
+            <button className="nav-item" onClick={() => setRoute('booking')}>Réserver</button>
+            <button className="nav-item" onClick={() => setRoute('mybookings')}>Mes réservations</button>
+            {showAdminLink && (
+              <button className="nav-item" onClick={() => setRoute('admin')}>Espace Admin</button>
+            )}
+          <div style={{ flex: 1 }} />
+          {user ? (
+            <>
+              <span className="nav-user">{user.email}</span>
+              <button className="nav-logout" onClick={async () => { await supabase.auth.signOut(); setUser(null); setRoute('rooms'); }}>Se déconnecter</button>
+            </>
+          ) : (
+            <button className="nav-login" onClick={() => setRoute('login')}>Se connecter</button>
+          )}
         </nav>
       </header>
 
-      <section style={{ marginTop: 12 }}>
-        {route === 'rooms' && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <button onClick={prevMonth}>&lt;</button>
-                <button onClick={nextMonth} style={{ marginLeft: 8 }}>&gt;</button>
-              </div>
-              <h2 style={{ margin: 0 }}>{monthName} {year}</h2>
-              <div />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, marginTop: 12 }}>
-              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
-                <div key={d} style={{ fontWeight: 'bold', textAlign: 'center' }}>{d}</div>
-              ))}
-
-              {/* empty slots before month start */}
-              {Array.from({ length: startIndex }).map((_, i) => (
-                <div key={`e-${i}`} style={{ minHeight: 80, border: '1px solid #eee' }} />
-              ))}
-
-              {/* days */}
-              {Array.from({ length: numDays }).map((_, i) => {
-                const day = i + 1
-                return (
-                  <div key={day} style={{ minHeight: 80, border: '1px solid #eee', padding: 6 }}>
-                    <div style={{ fontWeight: '600' }}>{day}</div>
-                  </div>
-                )
-              })}
-            </div>
-
-            <div style={{ marginTop: 16 }}>
-              <h3>Rooms</h3>
-              {loadingRooms && <div>Loading rooms…</div>}
-              {error && <div style={{ color: 'red' }}>{error}</div>}
-              {!loadingRooms && !error && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {rooms.length === 0 && <div>No rooms found.</div>}
-                  {rooms.map((r, idx) => (
-                    <div key={String(r.id)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', border: '1px solid #eee', borderRadius: 6 }}>
-                      <span style={{ width: 12, height: 12, background: COLORS[idx % COLORS.length], display: 'inline-block', borderRadius: 3 }} />
-                      <span>{r.name ?? `Room ${r.id}`}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+      <main className="container">
+        {route === 'login' && !user && (
+          <Login onSuccess={() => { setRoute('rooms') }} />
         )}
 
-        {route === 'booking' && <Booking />}
-      </section>
+        {route === 'rooms' && (
+          <Rooms
+            rooms={rooms}
+            loading={loadingRooms}
+            error={error}
+            onReserve={(room) => {
+              if (!user) {
+                setRoute('login')
+                return
+              }
+              setSelectedRoom(room)
+              setRoute('booking')
+            }}
+          />
+        )}
+
+        {route === 'booking' && (
+          <Booking room={selectedRoom} user={user} booking={selectedBooking} />
+        )}
+
+        {route === 'mybookings' && (
+          <React.Suspense fallback={<div>Chargement…</div>}>
+            {/* chargement différé pour garder le bundle petit */}
+            <MyBookings user={user} onEdit={(booking) => {
+              if (!booking) return
+              ;(async () => {
+                // chercher la salle associée à la réservation
+                const { data: roomData } = await supabase.from('rooms').select('*').eq('id', booking.room_id).single()
+                setSelectedRoom(roomData ?? null)
+                setSelectedBooking(booking)
+                setRoute('booking')
+              })()
+            }} />
+          </React.Suspense>
+        )}
+        {route === 'admin' && (
+          <Admin user={user} />
+        )}
+      </main>
     </div>
   )
+}
+
+function isAdmin(user: any | null) {
+  if (!user) return false
+  const um = user.user_metadata || {}
+  const am = user.app_metadata || {}
+  if (um.is_admin) return true
+  if (um.role === 'admin') return true
+  if (Array.isArray(am?.roles) && am.roles.includes('admin')) return true
+  return false
 }
