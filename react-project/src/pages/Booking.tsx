@@ -274,7 +274,7 @@ export default function Booking({ room, user, booking }: Props) {
 
   // écouter les changements de réservation en temps réel pour cette salle
   useEffect(() => {
-    if (!room?.id) return
+    if (!room?.id || confirmed) return
     const channel = supabase.channel(`room-bookings-${room.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings', filter: `room_id=eq.${room.id}` }, () => {
         // quand une réservation change, re-vérifier les conflits si on a des dates sélectionnées
@@ -300,7 +300,7 @@ export default function Booking({ room, user, booking }: Props) {
     return () => {
       channel.unsubscribe()
     }
-  }, [room?.id, startAt, endAt])
+  }, [room?.id, startAt, endAt, confirmed])
 
   return (
     <div className="container">
